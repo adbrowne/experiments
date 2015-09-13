@@ -6,16 +6,22 @@
         [amazonica.aws.dynamodbv2 :as dynamo])
   (:gen-class))
 
+(require '[metrics.core :refer [default-registry]])
+(require '[metrics.counters :refer [counter defcounter inc! value]])
+(require '[metrics.reporters.console :as console])
+(def CR (console/reporter {}))
+
+(defcounter default-registry writes-performed)
+
 (def cred {:endpoint   "ap-southeast-2"})
 (defn s3obj
   []
-  (get-object "andrewbrownepackages" "test2.json.gz"))
+  (:object-content (get-object "andrewbrownepackages" "test2.json.gz")))
 
 (defn jsonLines
-  []
+  [contentStream]
   (->
-   (s3obj)
-   (:object-content)
+   contentStream
    java.util.zip.GZIPInputStream.
    java.io.InputStreamReader.
    java.io.BufferedReader.
@@ -48,15 +54,21 @@
            :body (json/write-str item)
            }}}))
 
-(defn putDynamoItems
+(defn writeItemsToCounter
+  [& rest]
+  (inc! writes-performed)
+)
+
+(defn writeItemsToDynamo
   [items]
   (dynamo/batch-write-item
-      cred
-      :request-items
-      {"MyTable"
-       (clojure.core/map toPutRequest items)
-       }
-      ))
+   cred
+   :request-items {"MyTable" items}))
+
+(defn putDynamoItems
+  [writeItems items]
+  (writeItems
+   (clojure.core/map toPutRequest items)))
 
 (def in-chan (async/chan))
 (def out-chan (async/chan))
@@ -64,13 +76,16 @@
 (defn start-async-consumers
   "Start num-consumers threads that will consume work
   from the in-chan and put the results into the out-chan."
-  [num-consumers]
+  [writeItems num-consumers]
   (dotimes [_ num-consumers]
     (async/thread
+      (do
+        (println "starting consumer")
       (while true
         (let [line (async/<!! in-chan)
-              data (putDynamoItems line)]
-          (async/>!! out-chan data))))))
+              data (putDynamoItems writeItems line)]
+          (async/>!! out-chan data)))
+      ))))
 
 (defn start-async-aggregator
   "Take items from the out-chan and print it."
@@ -78,12 +93,15 @@
   (async/thread
     (while true
       (let [data (async/<!! out-chan)]
-        (print (str "."))))))
+        (do)))))
 
-(defn run2
-  []
-  (doseq [x (clojure.core/partition 25 (jsonLines))]
-    (async/>!! in-chan x)))
+(defn run
+  [contentStream writeItems]
+  (do
+    (start-async-consumers writeItems 8)
+    (start-async-aggregator)
+    (doseq [x (clojure.core/partition 25 (jsonLines contentStream))]
+     (async/>!! in-chan x))))
 
 (defn -main
   "I don't do a whole lot ... yet."
