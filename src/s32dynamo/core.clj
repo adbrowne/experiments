@@ -1,8 +1,8 @@
 (ns s32dynamo.core
   (:use [amazonica.aws.s3]
         [amazonica.aws.s3transfer]
-        [clojure.data.json :as json]
-        [clojure.core.async :as async]
+        [clojure.data.json :as json :refer [write-str read-str]]
+        [clojure.core.async :as async :refer [>! <! >!! <!! go]]
         [amazonica.aws.dynamodbv2 :as dynamo])
   (:gen-class))
 
@@ -10,21 +10,25 @@
 (defn s3obj
   []
   (get-object "andrewbrownepackages" "test2.json.gz"))
+
 (defn jsonLines
   []
-  (line-seq (java.io.BufferedReader. (java.io.InputStreamReader. (java.util.zip.GZIPInputStream. (:object-content ( s3obj ))) "UTF-8"))))
-
-(defn items
-  []
-  (map json/read-str (jsonLines)))
+  (->
+   (s3obj)
+   (:object-content)
+   java.util.zip.GZIPInputStream.
+   java.io.InputStreamReader.
+   java.io.BufferedReader.
+   line-seq
+  ))
 
 (defn recommendations
   []
-  (map (fn [blah] {:jobId (rand-int 2000000) :score (str "0." (rand-int 9999))}) (range 50)))
+  (clojure.core/map (fn [blah] {:jobId (rand-int 2000000) :score (str "0." (rand-int 9999))}) (range 50)))
 
 (defn entries
   []
-  (lazy-seq (map (fn [loginId] {:loginId loginId :batchId "1123432" :date "2012-04-23T18:25:43.511Z" :recommendations (recommendations)}) (range 1000000))))
+  (lazy-seq (clojure.core/map (fn [loginId] {:loginId loginId :batchId "1123432" :date "2012-04-23T18:25:43.511Z" :recommendations (recommendations)}) (range 1000000))))
 
 (defn write-test-file
   []
@@ -37,11 +41,12 @@
       (.newLine wrtr))))
 
 (defn toPutRequest
-  [item]
+  [jsonStr]
+  (let [item (json/read-str jsonStr)]
   {:put-request
-   {:item {:id (str (get item "loginId"))
+   {:item {:loginId (str (get item "loginId"))
            :body (json/write-str item)
-           }}})
+           }}}))
 
 (defn putDynamoItems
   [items]
@@ -49,13 +54,9 @@
       cred
       :request-items
       {"MyTable"
-       (map toPutRequest items)
-      }))
-
-(defn run
-  []
-  (doseq [x (partition 25 ( items ))]
-    (putDynamoItems x)))
+       (clojure.core/map toPutRequest items)
+       }
+      ))
 
 (def in-chan (async/chan))
 (def out-chan (async/chan))
@@ -68,7 +69,7 @@
     (async/thread
       (while true
         (let [line (async/<!! in-chan)
-              data line]
+              data (putDynamoItems line)]
           (async/>!! out-chan data))))))
 
 (defn start-async-aggregator
@@ -77,11 +78,11 @@
   (async/thread
     (while true
       (let [data (async/<!! out-chan)]
-        (println (str data "!"))))))
+        (print (str "."))))))
 
 (defn run2
   []
-  (doseq [x (items)]
+  (doseq [x (clojure.core/partition 25 (jsonLines))]
     (async/>!! in-chan x)))
 
 (defn -main
