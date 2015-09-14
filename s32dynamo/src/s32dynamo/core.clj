@@ -16,7 +16,7 @@
 (def cred {:endpoint   "ap-southeast-2"})
 (defn s3obj
   []
-  (:object-content (get-object "andrewbrownepackages" "test2.json.gz")))
+  (:object-content (get-object "andrewbrownepackages" "test.json.gz")))
 
 (defn jsonLines
   [contentStream]
@@ -34,11 +34,11 @@
 
 (defn entries
   []
-  (lazy-seq (clojure.core/map (fn [loginId] {:loginId loginId :batchId "1123432" :date "2012-04-23T18:25:43.511Z" :recommendations (recommendations)}) (range 1000000))))
+  (lazy-seq (clojure.core/map (fn [loginId] {:loginId loginId :batchId "1123432" :date "2012-04-23T18:25:43.511Z" :recommendations (recommendations)}) (range 7000000))))
 
 (defn write-test-file
   []
-  (with-open [wrtr (-> "test2.json.gz"
+  (with-open [wrtr (-> "test.json.gz"
                        clojure.java.io/output-stream
                        java.util.zip.GZIPOutputStream.
                        clojure.java.io/writer)]
@@ -70,8 +70,8 @@
   (writeItems
    (clojure.core/map toPutRequest items)))
 
-(def in-chan (async/chan))
-(def out-chan (async/chan))
+(def in-chan (async/chan 100))
+(def out-chan (async/chan 100))
 
 (defn start-async-consumers
   "Start num-consumers threads that will consume work
@@ -98,9 +98,9 @@
 (defn run
   [contentStream writeItems]
   (do
-    (start-async-consumers writeItems 8)
+    (start-async-consumers writeItems 16)
     (start-async-aggregator)
-    (doseq [x (clojure.core/partition 25 (jsonLines contentStream))]
+    (doseq [x (clojure.core/partition 100 (jsonLines contentStream))]
      (async/>!! in-chan x))))
 
 (defn -main
