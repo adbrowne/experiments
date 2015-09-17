@@ -63,12 +63,14 @@
   [items]
   (dynamo/batch-write-item
    cred
-   :request-items {"MyTable" items}))
+   :request-items {"MyTable2" items}))
 
 (defn putDynamoItems
   [writeItems items]
-  (writeItems
-   (clojure.core/map toPutRequest items)))
+  (doseq [batch (clojure.core/partition 25 items)]
+    (writeItems
+      (clojure.core/map toPutRequest batch))
+    (writeItemsToCounter)))
 
 (def in-chan (async/chan 100))
 (def out-chan (async/chan 100))
@@ -84,7 +86,7 @@
       (while true
         (let [line (async/<!! in-chan)
               data (putDynamoItems writeItems line)]
-          (async/>!! out-chan data)))
+          ()))
       ))))
 
 (defn start-async-aggregator
@@ -98,7 +100,7 @@
 (defn run
   [contentStream writeItems]
   (do
-    (start-async-consumers writeItems 16)
+    (start-async-consumers writeItems 8)
     (start-async-aggregator)
     (doseq [x (clojure.core/partition 100 (jsonLines contentStream))]
      (async/>!! in-chan x))))
